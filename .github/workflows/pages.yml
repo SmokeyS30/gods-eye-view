@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Redirect to Render
 
 on:
   push:
@@ -10,42 +10,30 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build
-        run: npm run build -- --base=/gods-eye-view/
-      - name: Copy Cesium assets into dist
-        # vite-plugin-cesium computes its copy destination with path.join(outDir, base, ...)
-        # and a non-root --base makes that an absolute filesystem path, so its own
-        # copy step silently misses dist/. Copy the files ourselves instead.
-        run: cp -r node_modules/cesium/Build/Cesium dist/cesium
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
   deploy:
-    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Build redirect page
+        run: |
+          mkdir -p site
+          cat > site/index.html <<'HTMLEOF'
+          <!doctype html>
+          <html><head><meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=https://gods-eye-view-wo81.onrender.com/">
+          <link rel="canonical" href="https://gods-eye-view-wo81.onrender.com/">
+          <title>God's Eye View</title></head>
+          <body style="background:#000;color:#fff;font-family:sans-serif;text-align:center;padding-top:20vh">
+          <p>Opening <a style="color:#7df" href="https://gods-eye-view-wo81.onrender.com/">God's Eye View</a>…</p>
+          </body></html>
+          HTMLEOF
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
