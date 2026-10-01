@@ -17,6 +17,7 @@
 import path from 'node:path';
 import { promises as fsp } from 'node:fs';
 
+
 const GROUPS = [
   'stations',
   'visual',
@@ -30,12 +31,14 @@ const CACHE_DIR = path.join(process.cwd(), '.gev-cache');
 const USER_AGENT =
   'gods-eye-view-celestrak-proxy/1.0 (+https://github.com/bilawalsidhu/gods-eye-view)';
 
+
 function tleUrl(group) {
   const url = new URL('https://celestrak.org/NORAD/elements/gp.php');
   url.searchParams.set('GROUP', group);
   url.searchParams.set('FORMAT', 'tle');
   return url;
 }
+
 
 async function seedGroup(group) {
   const res = await fetch(tleUrl(group).toString(), {
@@ -55,6 +58,7 @@ async function seedGroup(group) {
   return count;
 }
 
+
 const results = await Promise.allSettled(GROUPS.map(seedGroup));
 let ok = 0;
 results.forEach((result, i) => {
@@ -68,5 +72,7 @@ results.forEach((result, i) => {
   }
 });
 console.log(`[tle-seed] done: ${ok}/${GROUPS.length} groups cached`);
-// Never fail the build — the proxy degrades gracefully without cache.
-process.exit(0);
+// The build must never fail on a seed problem — the proxy degrades gracefully
+// without cache. But scheduled refreshes (TLE_STRICT=1) fail loudly so a
+// partial refresh never gets committed silently.
+process.exit(process.env.TLE_STRICT === '1' && ok < GROUPS.length ? 1 : 0);
