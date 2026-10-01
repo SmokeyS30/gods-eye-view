@@ -1761,8 +1761,7 @@ const MASSDOT_TILES = (() => {
 })();
 
 export async function loadMassdotSourcesFromOpenData() {
-  const endpoint =
-    process.env.CCTV_MASSDOT_GRAPHQL_URL || MASSDOT_GRAPHQL_URL;
+  const endpoint = process.env.CCTV_MASSDOT_GRAPHQL_URL || MASSDOT_GRAPHQL_URL;
   try {
     const settled = await Promise.allSettled(
       MASSDOT_TILES.map(async (tile) => {
@@ -1785,8 +1784,7 @@ export async function loadMassdotSourcesFromOpenData() {
         });
         if (!resp.ok) throw new Error(`tile HTTP ${resp.status}`);
         const payload = await readResponseJsonCapped(resp, 2 * 1024 * 1024);
-        const features =
-          payload?.data?.mapFeaturesQuery?.mapFeatures;
+        const features = payload?.data?.mapFeaturesQuery?.mapFeatures;
         return Array.isArray(features) ? features : [];
       }),
     );
