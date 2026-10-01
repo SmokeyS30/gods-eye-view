@@ -59,6 +59,10 @@ import {
   DELDOT_CCTV_URL,
   DEFAULT_DELDOT_MAX_SOURCES,
   DELDOT_ANCHORS,
+  MASSDOT_GRAPHQL_URL,
+  MASSDOT_IMAGE_ORIGIN,
+  DEFAULT_MASSDOT_MAX_SOURCES,
+  MASSDOT_ANCHORS,
 } from './constants.js';
 import {
   toFiniteNumber,
@@ -1696,6 +1700,201 @@ export async function loadDelDOTSourcesFromOpenData() {
   } catch (error) {
     console.warn(
       '[CCTV] DelDOT source download error:',
+      error?.message || error,
+    );
+    return [];
+  }
+}
+
+/**
+ * MassDOT / Mass511 traffic cameras (Massachusetts). Keyless: the public
+ * GraphQL endpoint needs no auth, and the JPEG snapshots live on a public
+ * CDN with CORS `*` (~2 minute refresh — still images, no video stream).
+ * The state is queried as tiled bounding boxes at zoom 12 (zoom < 10
+ * collapses cameras into clusters), deduped by camera URI, then
+ * distance-prioritized to stay within CCTV_MASSDOT_MAX_SOURCES.
+ * Only `active` cameras with a snapshot URL on the official CDN are kept.
+ *
+ * @returns {Promise<Array<object>>} Normalized camera source objects.
+ */
+const MASSDOT_GRAPHQL_QUERY = `query MapFeatures($input: MapFeaturesArgs!) {
+  mapFeaturesQuery(input: $input) {
+    mapFeatures {
+      __typename
+      title
+      uri
+      bbox
+      ... on Camera {
+        active
+        views(limit: 5) {
+          uri
+          ... on CameraView { url }
+          category
+        }
+      }
+    }
+    error { message type }
+  }
+}`;
+
+// Massachusetts extent; tiled 3x4 so each tile stays well inside zoom-12
+// individual-camera behaviour.
+const MASSDOT_TILES = (() => {
+  const north = 42.9;
+  const south = 41.2;
+  const east = -69.8;
+  const west = -73.5;
+  const rows = 3;
+  const cols = 4;
+  const tiles = [];
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      tiles.push({
+        north: north - ((north - south) * r) / rows,
+        south: north - ((north - south) * (r + 1)) / rows,
+        east: west + ((east - west) * (c + 1)) / cols,
+        west: west + ((east - west) * c) / cols,
+      });
+    }
+  }
+  return tiles;
+})();
+
+export async function loadMassdotSourcesFromOpenData() {
+  const endpoint =
+    process.env.CCTV_MASSDOT_GRAPHQL_URL || MASSDOT_GRAPHQL_URL;
+  try {
+    const settled = await Promise.allSettled(
+      MASSDOT_TILES.map(async (tile) => {
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: MASSDOT_GRAPHQL_QUERY,
+            variables: {
+              input: {
+                ...tile,
+                zoom: 12,
+                layerSlugs: ['normalCameras'],
+                nonClusterableUris: null,
+              },
+            },
+          }),
+          signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+          redirect: 'error',
+        });
+        if (!resp.ok) throw new Error(`tile HTTP ${resp.status}`);
+        const payload = await readResponseJsonCapped(resp, 2 * 1024 * 1024);
+        const features =
+          payload?.data?.mapFeaturesQuery?.mapFeatures;
+        return Array.isArray(features) ? features : [];
+      }),
+    );
+
+    const cameras = [];
+    for (const result of settled) {
+      if (result.status !== 'fulfilled') {
+        console.warn(
+          '[CCTV] MassDOT tile fetch failed:',
+          result.reason?.message || result.reason,
+        );
+        continue;
+      }
+      for (const feature of result.value) {
+        if (feature?.__typename !== 'Camera') continue;
+        if (feature?.active !== true) continue;
+        const uriMatch = /^camera\/(\d{1,10})$/.exec(
+          String(feature?.uri || ''),
+        );
+        if (!uriMatch) continue;
+        const bbox = feature?.bbox;
+        if (!Array.isArray(bbox) || bbox.length < 4) continue;
+        // GeoJSON order: [west, south, east, north]; a point camera has west==east.
+        const lon = (toFiniteNumber(bbox[0]) + toFiniteNumber(bbox[2])) / 2;
+        const lat = (toFiniteNumber(bbox[1]) + toFiniteNumber(bbox[3])) / 2;
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        // Massachusetts bounding box — a bad upstream coord can't place a camera out of state.
+        if (lat < 41.0 || lat > 43.0 || lon < -73.6 || lon > -69.7) continue;
+
+        const views = Array.isArray(feature?.views) ? feature.views : [];
+        let imageUrl = '';
+        for (const view of views) {
+          let parsed;
+          try {
+            parsed = new URL(String(view?.url || ''));
+          } catch {
+            continue;
+          }
+          // Official-host pin: snapshots only from the public MassDOT CDN.
+          if (
+            parsed.origin === MASSDOT_IMAGE_ORIGIN &&
+            parsed.pathname.startsWith('/cameras/MA/') &&
+            parsed.pathname.endsWith('.jpg') &&
+            !parsed.username &&
+            !parsed.password
+          ) {
+            imageUrl = parsed.href;
+            break;
+          }
+        }
+        if (!imageUrl) continue;
+
+        const cameraId = `massdot-${uriMatch[1]}`;
+        const title = String(feature?.title || '').trim();
+        // Titles lead with the route token ("I-93: I-93-NB-MM18.6-...").
+        const routeToken = title.split(':')[0].trim();
+        const routeSlug = routeToken
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+        // Titles embed NB/SB/EB/WB tokens ("I-93-NB-MM18.6"); allowBare=false
+        // never mistakes a bare street prefix for a direction.
+        const heading = directionToHeading(title);
+        const hasHeading = Number.isFinite(heading);
+
+        cameras.push({
+          id: cameraId,
+          name: title || `MassDOT ${uriMatch[1]}`,
+          city: routeToken || 'Massachusetts',
+          cityId: routeSlug ? `massdot-${routeSlug}` : 'massdot',
+          provider: 'MassDOT',
+          lat,
+          lon,
+          headingDeg: hasHeading ? heading : fallbackHeadingFromId(cameraId),
+          headingConfidence: hasHeading ? 'high' : 'low',
+          // Fabricated RAW PRIOR poses (same personalities as the other packs);
+          // the client ground-snap + manual calibration own the truth.
+          pitchDeg: hasHeading ? -24 : -18,
+          fovDeg: hasHeading ? 56 : 44,
+          rangeM: hasHeading ? 210 : 145,
+          mountHeightM: hasHeading ? 10 : 8,
+          groundElevationM: 10, // Estimated prior; client ground resolution owns placement.
+          feedType: 'image',
+          url: imageUrl,
+          snapshotUrl: imageUrl,
+          sourceKind: 'massdot-open-data',
+          license: 'Public MassDOT traffic camera frame',
+        });
+      }
+    }
+
+    const unique = Array.from(
+      new Map(cameras.map((camera) => [camera.id, camera])).values(),
+    );
+    const maxRaw = Number(
+      process.env.CCTV_MASSDOT_MAX_SOURCES || DEFAULT_MASSDOT_MAX_SOURCES,
+    );
+    const maxCount = Number.isFinite(maxRaw)
+      ? Math.max(8, Math.min(400, Math.floor(maxRaw)))
+      : DEFAULT_MASSDOT_MAX_SOURCES;
+    const prioritized = prioritizeSources(unique, maxCount, MASSDOT_ANCHORS);
+    console.log(
+      `[CCTV] Loaded MassDOT camera sources: ${unique.length} active (using nearest ${prioritized.length})`,
+    );
+    return prioritized;
+  } catch (error) {
+    console.warn(
+      '[CCTV] MassDOT source download error:',
       error?.message || error,
     );
     return [];

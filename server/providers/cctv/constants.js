@@ -244,6 +244,17 @@ export const DELDOT_ANCHORS = [
   { lat: 39.1582, lon: -75.5244 }, // Dover (Kent)
   { lat: 38.6906, lon: -75.3877 }, // Georgetown (Sussex)
 ];
+
+/** MassDOT / Mass511 CCTV: public GraphQL endpoint (no key); JPEG snapshots on a public CDN. */
+export const MASSDOT_GRAPHQL_URL = 'https://www.mass511.com/api/graphql';
+export const MASSDOT_IMAGE_ORIGIN = 'https://public.carsprogram.org';
+export const DEFAULT_MASSDOT_MAX_SOURCES = 300;
+export const MASSDOT_ANCHORS = [
+  { lat: 42.3601, lon: -71.0589 }, // Boston
+  { lat: 41.6838, lon: -70.2995 }, // Mid-Cape (Brewster)
+  { lat: 42.2626, lon: -71.8023 }, // Worcester
+  { lat: 42.5195, lon: -70.8967 }, // North Shore
+];
 /** Camera CATALOGS change rarely; 15 min keeps multi-megabyte upstream list refetches (Austin rows.json + 4 Caltrans districts + TfL + Ontario 511) infrequent. Frames are fetched per-request and are unaffected. */
 export const CCTV_SOURCE_CACHE_MS = 15 * 60 * 1000;
 /** Per-provider catalog-fetch timeout. Bounds the worst-case refresh so one
