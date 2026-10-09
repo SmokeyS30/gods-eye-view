@@ -1,4 +1,4 @@
-name: Redirect to Render
+name: Redirect to Azure
 
 on:
   push:
@@ -23,11 +23,11 @@ jobs:
           cat > site/index.html <<'HTMLEOF'
           <!doctype html>
           <html><head><meta charset="utf-8">
-          <meta http-equiv="refresh" content="0; url=https://gods-eye-view-wo81.onrender.com/">
-          <link rel="canonical" href="https://gods-eye-view-wo81.onrender.com/">
+          <meta http-equiv="refresh" content="0; url=https://daybreak-app-host-s30.eastus.cloudapp.azure.com/gev/">
+          <link rel="canonical" href="https://daybreak-app-host-s30.eastus.cloudapp.azure.com/gev/">
           <title>God's Eye View</title></head>
           <body style="background:#000;color:#fff;font-family:sans-serif;text-align:center;padding-top:20vh">
-          <p>Opening <a style="color:#7df" href="https://gods-eye-view-wo81.onrender.com/">God's Eye View</a>…</p>
+          <p>Opening <a style="color:#7df" href="https://daybreak-app-host-s30.eastus.cloudapp.azure.com/gev/">God's Eye View</a>…</p>
           </body></html>
           HTMLEOF
       - name: Upload Pages artifact
